@@ -19,7 +19,8 @@ begin
           restartf = addfiles(restartfilelist,"r")
             nfiles = dimsizes(restartfilelist)
    ;print(restartfilelist)
-
+ 
+   gridsrc = nemsrc+"tripole.mx025.nc"
    ; create a temporary restart file with needed variables at
    ; qdeg resolution
    outfile = nemsrc+"MOM6.mx025.res.nc"
@@ -30,13 +31,22 @@ begin
      print(ncocmd+"  "+outfile)
     system(ncocmd+"  "+outfile)
     ; v-velocity in _1 file
-     ncocmd = "ncks -A -v v "+restartfilelist(1)
+     ncocmd = "ncks -A -v v,sfc "+restartfilelist(1)
      print(ncocmd+"  "+outfile)
     system(ncocmd+"  "+outfile)
    else
      print("intermediate restart file exists, continuing ")
    end if
    delete(restartf)
+   delete(gridsrc)
+
+    ; set options for poisson_grid_fill
+    guess     = 1                ; use zonal means
+    is_cyclic = True             ; cyclic [global]
+    nscan     = 1500             ; usually much less than this
+    eps       = 1.e-2            ; variable dependent
+    relc      = 0.6              ; relaxation coefficient
+    opt       = 0                ; not used
 
 ;----------------------------------------------------------------------
 ;
@@ -68,34 +78,39 @@ begin
     veclist = (/ (/  "u",   "v"/), (/"Cu", "Cv"/) /) 
     print(veclist)
 
+   ; use the land mask to set the masking; don't mask bathy for now
+       gf = addfile(nemsrc+"tripole.mx025.nc","r")
+    tmask = where(gf->wet .eq. 0.0, 1.0, 0.0)
+   mask2d = conform_dims(dimsizes(restartf->sfc), tmask, (/1,2/))
+
+   ;mask3d = conform_dims(dimsizes(restartf->h),   tmask, (/2,3/))
+   ; the difference between mask3d defined above and mask3d defined 
+   ; below is whether the mask3d reflects the model bathymetry also
+   ; the above definition produces MOM6 model failures at startup
+ 
    ; use the interface thickness to set the masking
    ; the mask3d contain 1's on land and 0's at valid points.
      minh = 1.0e-3       ; the minimum thickness allowed in MOM6
    mask3d = where(restartf->h .lt. minh, 1.0, 0.0)
 
-   ; regrid the mask to obtain the interpolation masks.
-   ; the mask3d contain 1's on land and 0's at valid points.
+   delete(tmask)
+   delete(gf)
+   ;printVarSummary(mask2d)
+   ;printVarSummary(mask3d)
+   ; regrid the masks to obtain the interpolation masks.
+   ; the mask2d,mask3d contain 1's on land and 0's at valid points.
    ; when remapped, any mask value > 0 identifies land values that
    ; have crept into the field. remapped model fields are then
    ; masked with this interpolation mask
-
    ; specify the tripole-to-tripole weights file
-    wgtsfile = nemsrc+"tripole.mx025.Ct.to.mx050.Ct.bilinear.nc"
-    rgmask3d = ESMF_regrid_with_weights(mask3d, wgtsfile,False)
+   wgtsfile = nemsrc+"tripole.mx025.Ct.to.mx050.Ct.bilinear.nc"
+   rgmask2d = ESMF_regrid_with_weights(mask2d, wgtsfile,False)
+   rgmask3d = ESMF_regrid_with_weights(mask3d, wgtsfile,False)
 
-    ; use rgmask3d >0 and <1 to mask areas which are land-contaminated
-    ; this makes all land areas missing in order to use the poisson_grid_fill
-    ; routine
+    ; create the interpolation mask
+    ; the 3d mask has no bathymetry masking in it
+    rgmask2d = where(rgmask2d .gt. 0.0, default_fillvalue(typeof(rgmask2d)), 1.0)
     rgmask3d = where(rgmask3d .gt. 0.0, default_fillvalue(typeof(rgmask3d)), 1.0)
-    rgmask2d = rgmask3d(:,0,:,:)
-
-    ; set options for poisson_grid_fill
-    guess     = 1                ; use zonal means
-    is_cyclic = True             ; cyclic [global]
-    nscan     = 1500             ; usually much less than this
-    eps       = 1.e-2            ; variable dependent
-    relc      = 0.6              ; relaxation coefficient
-    opt       = 0                ; not used
 
    ; retrieve the rotation angle on the source grid and conform to 3d
          gf = addfile(nemsrc+"tripole.mx025.nc","r")
@@ -110,20 +125,24 @@ begin
    angdst3d = conform_dims(dimsizes(rgmask3d),angdst,(/2,3/))
 
    ; retrieve known land mask on destination grid and conform to 3d
-     land = gf->wet
-   land3d = conform_dims(dimsizes(rgmask3d), land, (/2,3/))
-   ;printVarSummary(angdst3d)
+    tmask = gf->wet
+   land2d = conform_dims((/nt,nj,ni/),    tmask, (/1,2/)) 
+   land3d = conform_dims((/nt,nz,nj,ni/), tmask, (/2,3/))
+   ;printVarSummary(land3d)
+   delete(tmask)
+   delete(gf)
 
     testfile = "mask_bilinear.nc"
     system("/bin/rm -f "+testfile)
     ; create
     testcdf = addfile(testfile,"c")
+    testcdf->rgmask2d = rgmask2d
     testcdf->rgmask3d = rgmask3d
     testcdf->mask3d = mask3d
     testcdf->land3d = land3d
     ; close
-    delete(testcdf)
-
+    ;delete(testcdf)
+ 
 ;----------------------------------------------------------------------
 ; a set of values for the dimension variables on the 050 grid
 ;----------------------------------------------------------------------
@@ -178,6 +197,7 @@ begin
     dimSizes = (/   1,     nz,    nj,     ni,    ni,    nj/)
     dimUnlim = (/True,  False, False,  False, False, False/)
     filedimdef(outcdf,dimNamesReorder,dimSizes,dimUnlim)
+    ;print(dimSizes)
 
     ; predefine each variable in the output file from the original restart
     do nv = 0,nvars-1
@@ -187,7 +207,7 @@ begin
       dnames := getfilevardimnames(restartf,varname)   ; variables may be a different size
       dsizes := getfilevardimsizes(restartf,varname)   ; the next time through the loop
        ndims := dimsizes(dnames)
-      ;print(varname+" "+ndims)
+      ;print(nv+"  "+varname+" "+ndims+" "+dnames)
 
       ; set grid stagger for 3d fields
       if(ndims .ge. 3)then
@@ -201,13 +221,12 @@ begin
        if(dnames(ndims-2) .eq. "latq" .and. dnames(ndims-1) .eq. "lonh")then
         gridtype(nv) = "Cv"
        end if
-       print(varname+" "+ndims+"  "+gridtype(nv))
+       ;print(varname+" "+ndims+"  "+gridtype(nv))
       end if
 
       filevardef(outcdf, varname, vtype, dnames)
       ;print(varname+"  "+gridtype(nv))
     end do
-
     ; explicitly exit file definition mode.
     setfileoption(outcdf,"DefineMode",False)
 
@@ -219,7 +238,8 @@ begin
     outcdf->lath    = (/latCt/)
     outcdf->lonq    = (/lonBu/)
     outcdf->latq    = (/latBu/)
-   
+  
+;if(1.eq.0)then
 ;----------------------------------------------------------------------
 ; loop over nvars variables, doing only 3d (sfc) variables
 ;----------------------------------------------------------------------
@@ -229,7 +249,6 @@ begin
      vargrid = gridtype(nv)
       ocnvar = restartf->$varname$
        ndims = dimsizes(dimsizes(ocnvar))
-     print(varname+"  "+ndims)
      if(ndims .eq. 3 .and. vargrid .eq. "Ct")then
       print("regridding variable "+varname+"  "+ndims)
 
@@ -247,19 +266,18 @@ begin
       print("filling variable "+varname)
       poisson_grid_fill( rgtt, is_cyclic, guess, nscan, eps, relc, opt)
       ; mask with land mask
-      rgtt = where(land3d(:,0,:,:) .eq. 0.0, 0.0, rgtt)
+      rgtt = where(land2d .eq. 0.0, 0.0, rgtt)
       outcdf->$varname$  = (/rgtt/)
 
       delete(rgtt)
      end if
      delete(ocnvar)
     end do
-
 ;----------------------------------------------------------------------
 ; loop over nvars variables, not vectors or 1-dims
 ;----------------------------------------------------------------------
 
-    ;nv = 1
+    ;nv = 2
     do nv = 0,nvars-1
      varname = vnames(nv)
      vargrid = gridtype(nv)
@@ -276,38 +294,20 @@ begin
       filevarattdef(outcdf, varname, rgtt)
       setfileoption(outcdf,"DefineMode",False)
 
-      ; find bottom-most valid value
-       bot = new((/1,nj,ni/),typeof(rgtt),0.0)
-       bot@_FillValue = default_fillvalue(typeof(bot))
-      do k = 0,nz-1
-       bot(0,:,:) = where(.not.ismissing(rgtt(0,k,:,:)),rgtt(0,k,:,:),0.0)
-      end do
-      ; mask out land contaminated areas
-      bot = where(ismissing(rgmask2d), bot@_FillValue, bot)
-      poisson_grid_fill( bot, is_cyclic, guess, nscan, eps, relc, opt)
-      ;testcdf->bot = bot
-
       ; mask out land contaminated areas
       rgtt = where(ismissing(rgmask3d), rgtt@_FillValue, rgtt)
-      ; vertically fill
-      do k = 0,nz-1
-       rgtt(0,k,:,:) = where(ismissing(rgtt(0,k,:,:)),bot(0,:,:), rgtt(0,k,:,:))
-      end do
-      ;testcdf->rgtt = rgtt
+      ; fill missing areas
+      poisson_grid_fill(rgtt, is_cyclic, guess, nscan, eps, relc, opt)
 
       ; mask with land mask
-      if(ndims .eq. 4)then
-       rgtt = where(land3d .eq. 0.0, 0.0, rgtt)
-      else
-       rgtt = where(land2d .eq. 0.0, 0.0, rgtt)
-      end if
+      rgtt = where(land3d .eq. 0.0, 0.0, rgtt)
       outcdf->$varname$  = (/rgtt/)
+
       delete(rgtt)
-      delete(bot)
      end if
      delete(ocnvar)
     end do
-
+;end if
 ;----------------------------------------------------------------------
 ; retrieve and regrid the vectors
 ;----------------------------------------------------------------------
@@ -324,8 +324,6 @@ begin
      print("unstagger "+vecnames(n)+" from "+vecgrids(n)+" to Ct")
      wgtsfile = nemsrc+"tripole.mx025."+vecgrids(n)+".to.Ct.bilinear.nc"
            ut = ESMF_regrid_with_weights(vecfld,wgtsfile,False)
-     delete(ut@lon2d)
-     delete(ut@lat2d)
 
             n = 1
          vvel = restartf->$vecnames(n)$
@@ -334,8 +332,6 @@ begin
      print("unstagger "+vecnames(n)+" from "+vecgrids(n)+" to Ct")
      wgtsfile = nemsrc+"tripole.mx025."+vecgrids(n)+".to.Ct.bilinear.nc"
            vt = ESMF_regrid_with_weights(vecfld,wgtsfile,False)
-     delete(vt@lon2d)
-     delete(vt@lat2d)
      delete(vecfld)
 
      ; rotate IJ to EW
@@ -353,61 +349,52 @@ begin
      ; regrid EW velocities on Ct grid to mx050 
      wgtsfile = nemsrc+"tripole.mx025.Ct.to.mx050.Ct.bilinear.nc"
             n = 0
-       vecfld = ut
        vecfld = where(ismissing(ut),0.0,ut)
       print("remapping EW velocity "+vecnames(n)+" on Ct")
-      ut := ESMF_regrid_with_weights(vecfld,wgtsfile,False)
-      ut@_FillValue = default_fillvalue(typeof(ut))
+      rgu = ESMF_regrid_with_weights(vecfld,wgtsfile,False)
       ; mask out land contaminated areas
-      ut = where(ismissing(rgmask3d), ut@_FillValue, ut)
+      rgu = where(ismissing(rgmask3d), rgu@_FillValue, rgu)
       ; fill missing areas
       print("filling variable "+vecnames(n))
-      poisson_grid_fill( ut, is_cyclic, guess, nscan, eps, relc, opt)
-      ut = where(land3d .eq. 0.0, 0.0, ut)
-      delete(ut@remap)
-      delete(ut@lon2d)
-      delete(ut@lat2d)
-      ;printVarSummary(ut)
+      poisson_grid_fill( rgu, is_cyclic, guess, nscan, eps, relc, opt)
+      ; mask with land mask
+      rgu = where(land3d .eq. 0.0, 0.0, rgu)
 
             n = 1
-       vecfld = vt
        vecfld = where(ismissing(vt),0.0,vt)
       print("remapping EW velocity "+vecnames(n)+" on Ct")
-      vt := ESMF_regrid_with_weights(vecfld,wgtsfile,False)
-      vt@_FillValue = default_fillvalue(typeof(vt))
+      rgv = ESMF_regrid_with_weights(vecfld,wgtsfile,False)
       ; mask out land contaminated areas
-      vt = where(ismissing(rgmask3d), vt@_FillValue, vt)
+      rgv = where(ismissing(rgmask3d), rgv@_FillValue, rgv)
       ; fill missing areas
       print("filling variable "+vecnames(n))
-      poisson_grid_fill( vt, is_cyclic, guess, nscan, eps, relc, opt)
-      vt = where(land3d .eq. 0.0, 0.0, vt)
-      delete(vt@remap)
-      delete(vt@lon2d)
-      delete(vt@lat2d)
+      poisson_grid_fill( rgv, is_cyclic, guess, nscan, eps, relc, opt)
+      ; mask with land mask
+      rgv = where(land3d .eq. 0.0, 0.0, rgv)
       delete(vecfld)
 
      ; rotate EW to IJ
      ; first copy Metadata
-       urot = ut
-       vrot = vt
-       urot =   ut*cos(angdst3d) -   vt*sin(angdst3d)
-       vrot =   vt*cos(angdst3d) +   ut*sin(angdst3d)
+       urot = rgu
+       vrot = rgv
+       urot =   rgu*cos(angdst3d) -   rgv*sin(angdst3d)
+       vrot =   rgv*cos(angdst3d) +   rgu*sin(angdst3d)
      ; copy back
-         ut = urot
-         vt = vrot
+        rgu = urot
+        rgv = vrot
      delete([/urot, vrot/])
 
      ; restagger from Ct to (Cu,Cv) 
             n = 0
-       vecfld = ut
-       vecfld = where(ismissing(ut),0.0,ut)
-       copy_VarAtts(ut,vecfld)
+       vecfld = where(ismissing(rgu),0.0,rgu)
+       copy_VarAtts(rgu,vecfld)
      print("restagger "+vecnames(n)+" from Ct to "+vecgrids(n))
      wgtsfile = nemsrc+"tripole.mx050.Ct.to."+vecgrids(n)+".bilinear.nc"
             u = ESMF_regrid_with_weights(vecfld,wgtsfile,False)
      delete(u@lon2d)
      delete(u@lat2d)
-     u = where(land3d .eq. 0.0, 0.0, u)
+     ; do not mask with land mask because land is on Ct
+     ;u = where(land3d .eq. 0.0, 0.0, u)
 
      ; enter file definition mode to add variable attributes
      setfileoption(outcdf,"DefineMode",True)
@@ -416,15 +403,15 @@ begin
      outcdf->$vecnames(n)$   = (/u/)
 
             n = 1
-       vecfld = vt
-       vecfld = where(ismissing(vt),0.0,vt)
-       copy_VarAtts(vt,vecfld)
+       vecfld = where(ismissing(rgv),0.0,rgv)
+       copy_VarAtts(rgv,vecfld)
      print("restagger "+vecnames(n)+" from Ct to "+vecgrids(n))
      wgtsfile = nemsrc+"tripole.mx050.Ct.to."+vecgrids(n)+".bilinear.nc"
             v = ESMF_regrid_with_weights(vecfld,wgtsfile,False)
      delete(v@lon2d)
      delete(v@lat2d)
-     v = where(land3d .eq. 0.0, 0.0, v)
+     ; do not mask with land mask because land is on Ct
+     ;v = where(land3d .eq. 0.0, 0.0, v)
 
      ; enter file definition mode to add variable attributes
      setfileoption(outcdf,"DefineMode",True)

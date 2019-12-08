@@ -78,23 +78,20 @@ begin
     veclist = (/ (/  "u",   "v"/), (/"Cu", "Cv"/) /) 
     print(veclist)
 
-   ; use the land mask to set the masking; don't mask bathy for now
+   ; use the land mask to set the masking
+   ; the mask contain 1's on land and 0's at valid points.
        gf = addfile(nemsrc+"tripole.mx025.nc","r")
     tmask = where(gf->wet .eq. 0.0, 1.0, 0.0)
    mask2d = conform_dims(dimsizes(restartf->sfc), tmask, (/1,2/))
+   mask3d = conform_dims(dimsizes(restartf->h),   tmask, (/2,3/))
 
-   ;mask3d = conform_dims(dimsizes(restartf->h),   tmask, (/2,3/))
-   ; the difference between mask3d defined above and mask3d defined 
-   ; below is whether the mask3d reflects the model bathymetry also
-   ; the above definition produces MOM6 model failures at startup
- 
-   ; use the interface thickness to set the masking
-   ; the mask3d contain 1's on land and 0's at valid points.
+   ; use the interface thickness to set the bathy masking
+   ; the mask contain 1's on land and 0's at valid points.
      minh = 1.0e-3       ; the minimum thickness allowed in MOM6
-   mask3d = where(restartf->h .lt. minh, 1.0, 0.0)
-
+    bathy = where(restartf->h .le. minh, 1.0, 0.0)
    delete(tmask)
    delete(gf)
+
    ;printVarSummary(mask2d)
    ;printVarSummary(mask3d)
    ; regrid the masks to obtain the interpolation masks.
@@ -106,11 +103,12 @@ begin
    wgtsfile = nemsrc+"tripole.mx025.Ct.to.mx050.Ct.bilinear.nc"
    rgmask2d = ESMF_regrid_with_weights(mask2d, wgtsfile,False)
    rgmask3d = ESMF_regrid_with_weights(mask3d, wgtsfile,False)
+   rgbath3d = ESMF_regrid_with_weights(bathy, wgtsfile,False)
 
     ; create the interpolation mask
-    ; the 3d mask has no bathymetry masking in it
     rgmask2d = where(rgmask2d .gt. 0.0, default_fillvalue(typeof(rgmask2d)), 1.0)
     rgmask3d = where(rgmask3d .gt. 0.0, default_fillvalue(typeof(rgmask3d)), 1.0)
+    rgbath3d = where(rgbath3d .gt. 0.0, default_fillvalue(typeof(rgbath3d)), 1.0)
 
    ; retrieve the rotation angle on the source grid and conform to 3d
          gf = addfile(nemsrc+"tripole.mx025.nc","r")
@@ -139,10 +137,12 @@ begin
     testcdf->rgmask2d = rgmask2d
     testcdf->rgmask3d = rgmask3d
     testcdf->mask3d = mask3d
+    testcdf->bathy = bathy
     testcdf->land3d = land3d
+    testcdf->rgbath3d = rgbath3d
     ; close
     ;delete(testcdf)
- 
+
 ;----------------------------------------------------------------------
 ; a set of values for the dimension variables on the 050 grid
 ;----------------------------------------------------------------------
@@ -173,7 +173,8 @@ begin
 ; set up the output netcdf file
 ;----------------------------------------------------------------------
 
-    rgrestartf = nemsrc+"MOM6.mx050.res.nc"
+    ;rgrestartf = nemsrc+"MOM6.mx050.res.nc"
+    rgrestartf = nemsrc+"MOM6.mx050.new.nc"
     ;print(rgrestartf)
     system("/bin/rm -f " + rgrestartf)    ; remove if exists
     outcdf  = addfile (rgrestartf, "c")  ; open output file
@@ -239,7 +240,6 @@ begin
     outcdf->lonq    = (/lonBu/)
     outcdf->latq    = (/latBu/)
   
-;if(1.eq.0)then
 ;----------------------------------------------------------------------
 ; loop over nvars variables, doing only 3d (sfc) variables
 ;----------------------------------------------------------------------
@@ -273,11 +273,12 @@ begin
      end if
      delete(ocnvar)
     end do
+
 ;----------------------------------------------------------------------
 ; loop over nvars variables, not vectors or 1-dims
 ;----------------------------------------------------------------------
 
-    ;nv = 2
+    ;nv = 4; h
     do nv = 0,nvars-1
      varname = vnames(nv)
      vargrid = gridtype(nv)
@@ -295,19 +296,24 @@ begin
       setfileoption(outcdf,"DefineMode",False)
 
       ; mask out land contaminated areas
-      rgtt = where(ismissing(rgmask3d), rgtt@_FillValue, rgtt)
+       rgtt = where(ismissing(rgmask3d), rgtt@_FillValue, rgtt)
       ; fill missing areas
       poisson_grid_fill(rgtt, is_cyclic, guess, nscan, eps, relc, opt)
 
       ; mask with land mask
-      rgtt = where(land3d .eq. 0.0, 0.0, rgtt)
+      ; if this is thickness, set min val
+      if(varname .eq. "h")then
+       rgtt = where(ismissing(rgbath3d) .and. land3d .eq. 0.0, minh, rgtt)
+      else
+       rgtt = where(land3d .eq. 0.0, 0.0, rgtt)
+      end if 
       outcdf->$varname$  = (/rgtt/)
 
       delete(rgtt)
      end if
      delete(ocnvar)
     end do
-;end if
+
 ;----------------------------------------------------------------------
 ; retrieve and regrid the vectors
 ;----------------------------------------------------------------------

@@ -7,9 +7,11 @@
 begin
 
    ; specify a date
-            cdate = "2012010100"
+            cdate = "2012100100"
    ; specify a location to use
        nemsrc     = "/scratch2/NCEPDEV/climate/Denise.Worthen/TTout/"
+   ; specifiy output directory 
+       outdir     = "/scratch2/NCEPDEV/climate/Denise.Worthen/ICmx050/"+cdate+"/"
    ; interpolation methods
    methods        = (/"bilinear"/)
    ; ocean model restart location 
@@ -23,7 +25,7 @@ begin
    gridsrc = nemsrc+"tripole.mx025.nc"
    ; create a temporary restart file with needed variables at
    ; qdeg resolution
-   outfile = nemsrc+"MOM6.mx025.res.nc"
+   outfile = outdir+"MOM6.mx025.res.nc"
 
    if(.not.fileexists(outfile))then
      print("creating intermediate restart file "+outfile)
@@ -174,8 +176,8 @@ begin
 ;----------------------------------------------------------------------
 
     ;rgrestartf = nemsrc+"MOM6.mx050.res.nc"
-    rgrestartf = nemsrc+"MOM6.mx050.new.nc"
-    ;print(rgrestartf)
+    rgrestartf = outdir+"MOM6.mx050.res.nc"
+    print("regridded output file name "+rgrestartf)
     system("/bin/rm -f " + rgrestartf)    ; remove if exists
     outcdf  = addfile (rgrestartf, "c")  ; open output file
     ;print(outcdf)
@@ -239,7 +241,7 @@ begin
     outcdf->lath    = (/latCt/)
     outcdf->lonq    = (/lonBu/)
     outcdf->latq    = (/latBu/)
-  
+
 ;----------------------------------------------------------------------
 ; loop over nvars variables, doing only 3d (sfc) variables
 ;----------------------------------------------------------------------

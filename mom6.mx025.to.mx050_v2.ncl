@@ -7,7 +7,7 @@
 begin
 
    ; specify a date
-            cdate = "2012100100"
+            cdate = "2013040100"
    ; specify a location to use
        nemsrc     = "/scratch2/NCEPDEV/climate/Denise.Worthen/TTout/"
    ; specifiy output directory 
@@ -267,6 +267,7 @@ begin
       ; fill missing areas
       print("filling variable "+varname)
       poisson_grid_fill( rgtt, is_cyclic, guess, nscan, eps, relc, opt)
+
       ; mask with land mask
       rgtt = where(land2d .eq. 0.0, 0.0, rgtt)
       outcdf->$varname$  = (/rgtt/)

@@ -7,9 +7,9 @@
 begin
 
    ; specify a date
-            cdate = "2013040100"
+            cdate = "2016100100"
    ; specify a location to use
-       nemsrc     = "/scratch2/NCEPDEV/climate/Denise.Worthen/TTout/"
+       nemsrc     = "/scratch2/NCEPDEV/climate/Denise.Worthen/TTout2/"
    ; specifiy output directory 
        outdir     = "/scratch2/NCEPDEV/climate/Denise.Worthen/ICmx050/"+cdate+"/"
    ; interpolation methods

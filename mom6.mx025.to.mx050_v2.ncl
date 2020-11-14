@@ -10,11 +10,11 @@ begin
             cdate = "2016100100"
    ; specify a location to use
        nemsrc     = "/scratch2/NCEPDEV/climate/Denise.Worthen/TTout2/"
-   ; specifiy output directory 
+   ; specifiy output directory
        outdir     = "/scratch2/NCEPDEV/climate/Denise.Worthen/ICmx050/"+cdate+"/"
    ; interpolation methods
    methods        = (/"bilinear"/)
-   ; ocean model restart location 
+   ; ocean model restart location
        dirsrc     = "/scratch1/NCEPDEV/nems/Bin.Li/S2S/FROM_HPSS/"+cdate+"/mom6_da/"
 
    restartfilelist = systemfunc("ls "+dirsrc+"MOM.res*.nc")
@@ -77,7 +77,7 @@ begin
    gridtype = ""
     nvpairs = 1
     veclist = new( (/nvpairs,2,2/),"string")
-    veclist = (/ (/  "u",   "v"/), (/"Cu", "Cv"/) /) 
+    veclist = (/ (/  "u",   "v"/), (/"Cu", "Cv"/) /)
     print(veclist)
 
    ; use the land mask to set the masking
@@ -126,7 +126,7 @@ begin
 
    ; retrieve known land mask on destination grid and conform to 3d
     tmask = gf->wet
-   land2d = conform_dims((/nt,nj,ni/),    tmask, (/1,2/)) 
+   land2d = conform_dims((/nt,nj,ni/),    tmask, (/1,2/))
    land3d = conform_dims((/nt,nz,nj,ni/), tmask, (/2,3/))
    ;printVarSummary(land3d)
    delete(tmask)
@@ -156,10 +156,10 @@ begin
    lonBu = where(gf->lonBu(ni/2,:) .lt. 60.5d0, gf->lonBu(ni/2,:), gf->lonBu(ni/2,:)-360.d0)
    delete(gf)
 
-   copy_VarAtts(restartf->lath,latCt) 
-   copy_VarAtts(restartf->lonh,lonCt) 
-   copy_VarAtts(restartf->latq,latBu) 
-   copy_VarAtts(restartf->lonq,lonBu) 
+   copy_VarAtts(restartf->lath,latCt)
+   copy_VarAtts(restartf->lonh,lonCt)
+   copy_VarAtts(restartf->latq,latBu)
+   copy_VarAtts(restartf->lonq,lonBu)
    ;printVarSummary(latCt)
    ;printVarSummary(lonCt)
    ;printVarSummary(latBu)
@@ -309,7 +309,7 @@ begin
        rgtt = where(ismissing(rgbath3d) .and. land3d .eq. 0.0, minh, rgtt)
       else
        rgtt = where(land3d .eq. 0.0, 0.0, rgtt)
-      end if 
+      end if
       outcdf->$varname$  = (/rgtt/)
 
       delete(rgtt)
@@ -355,7 +355,7 @@ begin
      delete([/urot, vrot/])
      ;printVarSummary(ut)
 
-     ; regrid EW velocities on Ct grid to mx050 
+     ; regrid EW velocities on Ct grid to mx050
      wgtsfile = nemsrc+"tripole.mx025.Ct.to.mx050.Ct.bilinear.nc"
             n = 0
        vecfld = where(ismissing(ut),0.0,ut)
@@ -393,7 +393,7 @@ begin
         rgv = vrot
      delete([/urot, vrot/])
 
-     ; restagger from Ct to (Cu,Cv) 
+     ; restagger from Ct to (Cu,Cv)
             n = 0
        vecfld = where(ismissing(rgu),0.0,rgu)
        copy_VarAtts(rgu,vecfld)
